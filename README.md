@@ -53,12 +53,14 @@ Upload your dataset with a simple drag-and-drop interface. Supports CSV, TSV, an
 ### Explore Tab — Exploratory Data Analysis
 Get instant KPIs, dataset preview with filtering, AI executive summaries, missing value analysis, and deep-dive variable distributions.
 
-![EDA Tab](docs/screenshots/eda.png)
+![EDA Tab — Overview](docs/screenshots/eda-1.png)
+![EDA Tab — Variable Deep-Dive](docs/screenshots/eda-2.png)
 
 ### Predict Tab — Predictive Modeling
 Define a prediction target in plain English. The system trains 3 ML models, picks the best, and generates a forecast chart.
 
-![Predict Tab](docs/screenshots/predict.png)
+![Predict Tab — Define Target](docs/screenshots/predict.png)
+![Predict Tab — Results & Forecast](docs/screenshots/predict-1.png)
 
 ### Story Tab — AI Report Generator
 Generate editorial-quality data reports with KPIs, core findings, quality metrics, and export to PDF.
