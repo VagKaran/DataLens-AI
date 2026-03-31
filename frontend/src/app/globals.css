@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@layer base {
+  body {
+    @apply bg-background text-on-surface font-sans antialiased;
+  }
+
+  ::selection {
+    @apply bg-primary-container text-on-primary-container;
+  }
+}
+
+@layer components {
+  /* Glass panel effect */
+  .glass-panel {
+    background: rgba(45, 52, 73, 0.6);
+    backdrop-filter: blur(20px);
+  }
+
+  /* Ghost border — per DESIGN.md */
+  .ghost-border {
+    border: 1px solid rgba(66, 71, 84, 0.18);
+  }
+
+  /* Primary gradient CTA */
+  .gradient-primary {
+    @apply bg-gradient-to-br from-primary to-primary-container;
+  }
+
+  /* Surface layering classes */
+  .surface-base { background-color: #0b1326; }
+  .surface-low { background-color: #131b2e; }
+  .surface-mid { background-color: #171f33; }
+  .surface-high { background-color: #222a3d; }
+  .surface-highest { background-color: #2d3449; }
+
+  /* Label typography — instrument panel */
+  .label-technical {
+    @apply text-[10px] font-bold uppercase tracking-[0.05em];
+  }
+
+  /* Metric card */
+  .metric-card {
+    @apply bg-surface-container-low p-6 rounded-2xl
+           hover:bg-surface-container transition-colors duration-300;
+  }
+
+  /* Chat bubble styles */
+  .bubble-ai {
+    @apply bg-[#1E293B] text-on-surface p-4 rounded-2xl rounded-tl-none
+           border border-outline-variant/10 shadow-sm;
+  }
+
+  .bubble-user {
+    @apply gradient-primary text-on-primary-container p-4
+           rounded-2xl rounded-tr-none shadow-lg shadow-primary/5;
+  }
+
+  /* Context meter */
+  .context-bar {
+    @apply h-1.5 rounded-full overflow-hidden bg-surface-container-highest;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .tracking-tighter-custom { letter-spacing: -0.02em; }
+
+  /* Tinted ambient shadow */
+  .shadow-ambient {
+    box-shadow: 0 32px 64px rgba(173, 198, 255, 0.08);
+  }
+}
