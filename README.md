@@ -48,7 +48,7 @@ Simply upload a CSV, TSV, or Excel file and the platform handles everything: sta
 ### Upload Screen
 Upload your dataset with a simple drag-and-drop interface. Supports CSV, TSV, and XLSX formats.
 
-![Upload Screen](docs/screenshots/upload.png)
+![Upload Screen](docs/screenshots/Upload.png)
 
 ### Explore Tab — Exploratory Data Analysis
 Get instant KPIs, dataset preview with filtering, AI executive summaries, missing value analysis, and deep-dive variable distributions.
@@ -59,8 +59,8 @@ Get instant KPIs, dataset preview with filtering, AI executive summaries, missin
 ### Predict Tab — Predictive Modeling
 Define a prediction target in plain English. The system trains 3 ML models, picks the best, and generates a forecast chart.
 
-![Predict Tab — Define Target](docs/screenshots/predict.png)
-![Predict Tab — Results & Forecast](docs/screenshots/predict-1.png)
+![Predict Tab — Define Target](docs/screenshots/predict-1.png)
+![Predict Tab — Results & Forecast](docs/screenshots/predict-2.png)
 
 ### Story Tab — AI Report Generator
 Generate editorial-quality data reports with KPIs, core findings, quality metrics, and export to PDF.
@@ -70,7 +70,7 @@ Generate editorial-quality data reports with KPIs, core findings, quality metric
 ### Chat Tab — Multi-Model AI Chatbot
 Chat with your data using natural language. Choose between cloud and local models. See the generated SQL, data tables, and auto-generated charts.
 
-![Chat Tab](docs/screenshots/chat.png)
+![Chat Tab](docs/screenshots/Chat.png)
 
 ---
 
