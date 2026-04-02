@@ -12,6 +12,12 @@ import type {
   VariableAnalysis,
 } from "@/types";
 
+export interface ToastItem {
+  id: string;
+  message: string;
+  type: "success" | "error" | "info";
+}
+
 interface AppState {
   // ─── Dataset ───
   dataset: DatasetInfo | null;
@@ -53,10 +59,17 @@ interface AppState {
   setChatLoading: (l: boolean) => void;
   suggestedQuestions: string[];
   setSuggestedQuestions: (q: string[]) => void;
+  chatDatasetId: string | null;
+  setChatDatasetId: (id: string | null) => void;
 
   // ─── Global ───
   loading: boolean;
   setLoading: (l: boolean) => void;
+
+  // ─── Toasts ───
+  toasts: ToastItem[];
+  addToast: (toast: Omit<ToastItem, "id">) => void;
+  removeToast: (id: string) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -101,8 +114,19 @@ export const useStore = create<AppState>((set) => ({
   setChatLoading: (l) => set({ chatLoading: l }),
   suggestedQuestions: [],
   setSuggestedQuestions: (q) => set({ suggestedQuestions: q }),
+  chatDatasetId: null,
+  setChatDatasetId: (id) => set({ chatDatasetId: id }),
 
   // Global
   loading: false,
   setLoading: (l) => set({ loading: l }),
+
+  // Toasts
+  toasts: [],
+  addToast: (toast) =>
+    set((s) => ({
+      toasts: [...s.toasts, { ...toast, id: crypto.randomUUID() }],
+    })),
+  removeToast: (id) =>
+    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));

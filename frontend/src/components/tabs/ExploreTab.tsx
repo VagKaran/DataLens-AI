@@ -14,7 +14,15 @@ import {
   Sparkles,
   X,
   Plus,
+  Copy,
+  Check,
+  Hash,
+  Type,
+  Calendar,
+  ArrowUpDown,
 } from "lucide-react";
+import { motion } from "framer-motion";
+import NextStepBanner from "@/components/ui/NextStepBanner";
 import {
   BarChart,
   Bar,
@@ -22,8 +30,8 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   CartesianGrid,
 } from "recharts";
 
@@ -38,6 +46,8 @@ export default function ExploreTab() {
     setVariableAnalysis,
   } = useStore();
   const [loading, setLoading] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{ col: string; dir: "asc" | "desc" } | null>(null);
+  const [copiedSummary, setCopiedSummary] = useState(false);
 
   // Filter state
   const [showFilterPanel, setShowFilterPanel] = useState(false);
@@ -116,8 +126,22 @@ export default function ExploreTab() {
     );
   }, [allPreview, filters]);
 
-  // Show up to 20 rows (filtered)
-  const preview = filteredPreview.slice(0, 20);
+  // Apply column sort
+  const sortedPreview = useMemo(() => {
+    if (!sortConfig) return filteredPreview;
+    return [...filteredPreview].sort((a, b) => {
+      const av = a[sortConfig.col] ?? "";
+      const bv = b[sortConfig.col] ?? "";
+      const diff =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      return sortConfig.dir === "asc" ? diff : -diff;
+    });
+  }, [filteredPreview, sortConfig]);
+
+  // Show up to 20 rows
+  const preview = sortedPreview.slice(0, 20);
 
   function addFilter() {
     if (!pendingFilter.column || !pendingFilter.value) return;
@@ -159,6 +183,17 @@ export default function ExploreTab() {
         </div>
       </section>
 
+      {/* Next Step Banner — appears when EDA data is loaded */}
+      {stats && (
+        <NextStepBanner
+          title="Explore complete — ready for predictions"
+          description={`${stats.numeric_variables} numeric variables found. Try predicting an outcome or chat with your data.`}
+          cta="Go to Predict"
+          onAction={() => useStore.getState().setActiveTab("predict")}
+          color="blue"
+        />
+      )}
+
       {/* KPI Cards */}
       <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         {[
@@ -191,8 +226,14 @@ export default function ExploreTab() {
             color: "text-green-400",
             bgColor: "bg-green-400/10",
           },
-        ].map(({ icon: Icon, label, value, change, color, bgColor }) => (
-          <div key={label} className="metric-card flex flex-col justify-between">
+        ].map(({ icon: Icon, label, value, change, color, bgColor }, i) => (
+          <motion.div
+            key={label}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, delay: i * 0.07 }}
+            className="metric-card flex flex-col justify-between"
+          >
             <div className="flex justify-between items-start mb-4">
               <span className={`${color} p-2 ${bgColor} rounded-lg`}>
                 <Icon size={20} />
@@ -203,11 +244,21 @@ export default function ExploreTab() {
             </div>
             <div>
               <p className="label-technical text-outline mb-1">{label}</p>
-              <h3 className="text-2xl font-bold tracking-tight text-on-surface">
-                {loading ? "..." : value}
-              </h3>
+              {loading ? (
+                <div className="h-8 w-24 bg-surface-container-high rounded-lg animate-pulse mt-1" />
+              ) : (
+                <motion.h3
+                  key={value}
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.3 }}
+                  className="text-2xl font-bold tracking-tight text-on-surface"
+                >
+                  {value}
+                </motion.h3>
+              )}
             </div>
-          </div>
+          </motion.div>
         ))}
       </section>
 
@@ -417,14 +468,41 @@ export default function ExploreTab() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surface-container-low/50">
-                  {columns.map((col) => (
-                    <th
-                      key={col}
-                      className="px-6 py-4 label-technical text-outline border-b border-outline-variant/10"
-                    >
-                      {col}
-                    </th>
-                  ))}
+                  {columns.map((col) => {
+                    const isNumeric = dataset.numeric_columns.includes(col);
+                    const isDate = col.toLowerCase().includes("date") || col.toLowerCase().includes("time");
+                    const isSorted = sortConfig?.col === col;
+                    return (
+                      <th
+                        key={col}
+                        className="px-6 py-4 label-technical text-outline border-b border-outline-variant/10 cursor-pointer hover:bg-surface-container-high/40 transition-colors group select-none"
+                        onClick={() =>
+                          setSortConfig((prev) => {
+                            if (prev?.col === col) {
+                              return prev.dir === "asc" ? { col, dir: "desc" } : null;
+                            }
+                            return { col, dir: "asc" };
+                          })
+                        }
+                      >
+                        <div className="flex items-center gap-1.5 whitespace-nowrap">
+                          {isNumeric ? (
+                            <Hash size={9} className="text-primary/70 flex-shrink-0" />
+                          ) : isDate ? (
+                            <Calendar size={9} className="text-tertiary/70 flex-shrink-0" />
+                          ) : (
+                            <Type size={9} className="text-on-surface-variant/50 flex-shrink-0" />
+                          )}
+                          <span>{col}</span>
+                          {isSorted ? (
+                            <span className="text-primary">{sortConfig!.dir === "asc" ? "▲" : "▼"}</span>
+                          ) : (
+                            <ArrowUpDown size={8} className="opacity-0 group-hover:opacity-40 transition-opacity text-on-surface-variant" />
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/5">
@@ -451,11 +529,32 @@ export default function ExploreTab() {
             <div className="absolute top-0 right-0 p-4 opacity-10">
               <Sparkles size={48} />
             </div>
-            <div className="flex items-center gap-2 mb-4">
-              <Brain size={20} className="text-tertiary" />
-              <h2 className="text-lg font-bold tracking-tight">
-                AI Executive Summary
-              </h2>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Brain size={20} className="text-tertiary" />
+                <h2 className="text-lg font-bold tracking-tight">
+                  AI Executive Summary
+                </h2>
+              </div>
+              {stats?.ai_summary && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      stats.ai_summary + (stats.key_insight ? `\n\nKey Insight: ${stats.key_insight}` : "")
+                    );
+                    setCopiedSummary(true);
+                    setTimeout(() => setCopiedSummary(false), 2000);
+                  }}
+                  className="p-2 rounded-lg bg-surface-container-high hover:bg-primary/20 transition-colors flex-shrink-0"
+                  title="Copy summary"
+                >
+                  {copiedSummary ? (
+                    <Check size={13} className="text-primary" />
+                  ) : (
+                    <Copy size={13} className="text-on-surface-variant" />
+                  )}
+                </button>
+              )}
             </div>
             <div className="space-y-4">
               <p className="text-sm leading-relaxed text-on-surface-variant">
@@ -525,6 +624,81 @@ export default function ExploreTab() {
         </div>
       </div>
 
+      {/* Correlation Heatmap */}
+      {stats?.correlations && Object.keys(stats.correlations).length > 1 && (
+        <section className="bg-surface-container rounded-2xl p-8 mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-primary/10 rounded-xl">
+              <BarChart3 size={20} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold tracking-tight">Correlation Matrix</h2>
+              <p className="text-xs text-on-surface-variant">Pearson coefficients between numeric variables — hover a cell for exact value</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="border-separate border-spacing-1">
+              <thead>
+                <tr>
+                  <th className="w-28" />
+                  {Object.keys(stats.correlations).map((col) => (
+                    <th
+                      key={col}
+                      className="label-technical text-on-surface-variant font-semibold text-center pb-2"
+                      style={{ writingMode: "vertical-lr", transform: "rotate(180deg)", height: "72px", fontSize: "9px" }}
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(stats.correlations).map((rowCol) => (
+                  <tr key={rowCol}>
+                    <td className="pr-3 py-0.5 label-technical text-on-surface-variant font-semibold text-right whitespace-nowrap" style={{ fontSize: "9px" }}>
+                      {rowCol}
+                    </td>
+                    {Object.keys(stats.correlations).map((colCol) => {
+                      const val = stats.correlations[rowCol]?.[colCol] ?? 0;
+                      const isIdentity = rowCol === colCol;
+                      const bg = isIdentity
+                        ? "rgba(173,198,255,0.25)"
+                        : val > 0
+                        ? `rgba(59,130,246,${Math.abs(val) * 0.75 + 0.08})`
+                        : `rgba(239,68,68,${Math.abs(val) * 0.75 + 0.08})`;
+                      const textColor = Math.abs(val) > 0.55 ? "#fff" : "#8c909f";
+                      return (
+                        <td
+                          key={colCol}
+                          className="w-11 h-9 text-center rounded-lg font-bold transition-all cursor-default hover:scale-110 hover:z-10 relative"
+                          style={{ backgroundColor: bg, color: textColor, fontSize: "10px" }}
+                          title={`${rowCol} × ${colCol}: ${val.toFixed(3)}`}
+                        >
+                          {isIdentity ? "1.00" : val.toFixed(2)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-5 mt-5">
+            <span className="text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">Scale:</span>
+            {[
+              { bg: "rgba(239,68,68,0.8)", label: "−1.0 strong negative" },
+              { bg: "rgba(173,198,255,0.15)", label: "0.0 no correlation" },
+              { bg: "rgba(59,130,246,0.8)", label: "+1.0 strong positive" },
+            ].map(({ bg, label }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <div className="w-6 h-3 rounded" style={{ background: bg }} />
+                <span className="text-[10px] text-on-surface-variant">{label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Variable Deep-Dive */}
       <section className="bg-surface-container rounded-2xl p-8 mb-12">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
@@ -574,7 +748,13 @@ export default function ExploreTab() {
                 </div>
               </div>
               <ResponsiveContainer width="100%" height="80%">
-                <LineChart data={variableAnalysis.trend_data}>
+                <AreaChart data={variableAnalysis.trend_data}>
+                  <defs>
+                    <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#adc6ff" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#adc6ff" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="#424754" strokeOpacity={0.1} />
                   <XAxis dataKey="index" stroke="#8c909f" fontSize={10} />
                   <YAxis stroke="#8c909f" fontSize={10} />
@@ -586,14 +766,15 @@ export default function ExploreTab() {
                       color: "#dae2fd",
                     }}
                   />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="value"
                     stroke="#adc6ff"
-                    strokeWidth={2}
+                    strokeWidth={2.5}
+                    fill="url(#trendGrad)"
                     dot={false}
                   />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
 

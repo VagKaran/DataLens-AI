@@ -95,6 +95,7 @@ export interface ChatMessage {
   data?: Record<string, unknown>[];
   visualization?: string; // base64
   tokens_used?: number;
+  followups?: string[];
 }
 
 // ─── App State ───

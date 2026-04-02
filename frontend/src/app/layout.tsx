@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ToastManager } from "@/components/ui/Toast";
 
 export const metadata: Metadata = {
   title: "DataLens AI",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body>{children}</body>
+      <body>
+        {children}
+        <ToastManager />
+      </body>
     </html>
   );
 }

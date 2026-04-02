@@ -48,6 +48,7 @@ export default function StoryTab() {
     "Bento Grid",
     "Heatmaps",
   ]);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   async function handleGenerate() {
     setStoryLoading(true);
@@ -74,8 +75,8 @@ export default function StoryTab() {
 
   const handleDownloadPDF = useCallback(async () => {
     if (!reportRef.current) return;
+    setPdfLoading(true);
     try {
-      // Dynamic import to avoid SSR issues
       const html2pdf = (await import("html2pdf.js")).default;
       const opt = {
         margin: [10, 10, 10, 10],
@@ -92,8 +93,9 @@ export default function StoryTab() {
       await html2pdf().set(opt).from(reportRef.current).save();
     } catch (err) {
       console.error("PDF generation failed:", err);
-      // Fallback: use browser print
       window.print();
+    } finally {
+      setPdfLoading(false);
     }
   }, [storyReport]);
 
@@ -211,7 +213,27 @@ export default function StoryTab() {
 
         {/* Report Output */}
         <section className="col-span-12 lg:col-span-8">
-          {report ? (
+          {storyLoading ? (
+            <div className="bg-surface-container-low rounded-2xl border border-outline-variant/5 overflow-hidden shadow-2xl animate-pulse">
+              <div className="p-12 border-b border-outline-variant/10 space-y-6">
+                <div className="h-8 w-64 bg-surface-container-high rounded-lg" />
+                <div className="h-4 w-96 bg-surface-container-high rounded" />
+                <div className="grid grid-cols-3 gap-6 mt-6">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="p-4 bg-surface-container rounded-xl space-y-3">
+                      <div className="h-3 w-16 bg-surface-container-high rounded" />
+                      <div className="h-8 w-24 bg-surface-container-high rounded" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="p-12 space-y-6">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-16 bg-surface-container-high rounded-xl" />
+                ))}
+              </div>
+            </div>
+          ) : report ? (
             <article ref={reportRef} className="bg-surface-container-low rounded-2xl overflow-hidden border border-outline-variant/5 shadow-2xl">
               {/* Report Header */}
               <div className="p-12 border-b border-outline-variant/10">
@@ -325,10 +347,23 @@ export default function StoryTab() {
                 <div className="pt-12 border-t border-outline-variant/10 flex justify-center">
                   <button
                     onClick={handleDownloadPDF}
-                    className="px-8 py-3 bg-surface-container border border-outline-variant/20 rounded-xl text-on-surface font-bold text-sm flex items-center gap-3 hover:bg-surface-container-highest transition-all active:scale-[0.98]"
+                    disabled={pdfLoading}
+                    className="px-8 py-3 bg-surface-container border border-outline-variant/20 rounded-xl text-on-surface font-bold text-sm flex items-center gap-3 hover:bg-surface-container-highest transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <FileText size={18} />
-                    Download Report as PDF
+                    {pdfLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Generating PDF...
+                      </>
+                    ) : (
+                      <>
+                        <FileText size={18} />
+                        Download Report as PDF
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

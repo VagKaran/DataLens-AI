@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 
+import httpx
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -86,8 +87,13 @@ def _build_sql_prompt(schema: str, question: str) -> str:
         f"Rules:\n"
         f"- Return ONLY the SQL query, nothing else\n"
         f"- Use SQLite syntax\n"
+        f"- IMPORTANT: Column names that contain spaces MUST be quoted with double quotes, e.g. \"Adj Close\"\n"
+        f"- Use the EXACT column names shown in the schema above — do NOT rename them (e.g. do NOT change spaces to underscores)\n"
         f"- Limit results to 50 rows maximum\n"
         f"- Handle potential NULL values\n"
+        f"- This is SQLite — use strftime() for dates, NOT DATE_FORMAT, MONTH(), YEAR() or other MySQL/PostgreSQL functions\n"
+        f"- Example date grouping: strftime('%Y-%m', Date) for monthly, strftime('%Y', Date) for yearly\n"
+        f"- Write the complete query in a single statement — do NOT split it across multiple lines with comments\n"
     )
 
 
@@ -125,6 +131,32 @@ def _clean_sql(raw: str) -> str:
     return sql.strip()
 
 
+def _fix_column_names(sql: str, db_path: str) -> str:
+    """Fix column names in SQL that don't match actual DB columns."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(data);")
+    real_cols = [row[1] for row in cursor.fetchall()]
+    conn.close()
+
+    # Build a mapping: underscored/wrong versions -> real column name
+    fix_map = {}
+    for col in real_cols:
+        # Map underscore version to real name
+        underscored = col.replace(" ", "_")
+        if underscored != col:
+            fix_map[underscored] = f'"{col}"'
+        # Map unquoted version with spaces (rare but possible)
+        if " " in col and f'"{col}"' not in sql:
+            fix_map[col] = f'"{col}"'
+
+    for wrong, right in fix_map.items():
+        # Replace whole-word occurrences only
+        sql = re.sub(r'\b' + re.escape(wrong) + r'\b', right, sql)
+
+    return sql
+
+
 def _query_openai(prompt: str) -> str:
     client = _get_openai()
     resp = client.chat.completions.create(
@@ -136,29 +168,32 @@ def _query_openai(prompt: str) -> str:
     return resp.choices[0].message.content or ""
 
 
-def _query_ollama(prompt: str, model_id: str) -> str:
-    """Query local Ollama model."""
-    import urllib.request
+async def _query_ollama(prompt: str, model_id: str) -> str:
+    """Query local Ollama model asynchronously with generous timeout."""
     import json
 
     ollama_model = MODEL_TO_OLLAMA.get(model_id, "mistral:latest")
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-    payload = json.dumps({
+    payload = {
         "model": ollama_model,
         "prompt": prompt,
         "stream": False,
-    }).encode()
+        "options": {"temperature": 0, "num_predict": 512},
+    }
 
-    req = urllib.request.Request(
-        f"{base_url}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{base_url}/api/generate", json=payload)
+            if resp.status_code != 200:
+                body = resp.text[:500]
+                raise HTTPException(503, f"Ollama error {resp.status_code}: {body}")
+            data = resp.json()
             return data.get("response", "")
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(503, f"Ollama ({ollama_model}) timed out — model may be loading, try again")
     except Exception as e:
         raise HTTPException(503, f"Ollama ({ollama_model}) unavailable: {e}")
 
@@ -272,33 +307,69 @@ def _create_visualization(data: list[dict], chart_type: str) -> str | None:
 
 
 def _generate_suggestions(schema: str) -> list[str]:
-    """Generate context-aware suggestions based on schema."""
+    """Generate specific, insightful suggestions based on actual schema columns."""
     try:
         client = _get_openai()
         prompt = (
-            f"Given this database schema:\n{schema}\n\n"
-            f"Generate 6 natural language questions a user might ask. "
-            f"Return them as a numbered list."
+            f"You are a senior data analyst. Given this database schema:\n{schema}\n\n"
+            f"Generate exactly 6 highly specific and insightful questions that would reveal "
+            f"meaningful patterns, trends, or anomalies in this data.\n\n"
+            f"Rules:\n"
+            f"- Each question MUST reference actual column names from the schema above\n"
+            f"- Questions should uncover distributions, group comparisons, correlations, or outliers\n"
+            f"- Avoid generic questions like 'show first 10 rows' or 'count all rows'\n"
+            f"- Good example: 'What is the average Fare grouped by Pclass and Survived?'\n"
+            f"- Questions should be concise (max 12 words)\n"
+            f"- Return ONLY 6 questions, one per line, no numbering, no extra text\n"
         )
         resp = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=300,
+            temperature=0.6,
+            max_tokens=350,
         )
         text = resp.choices[0].message.content or ""
         lines = [
             re.sub(r"^\d+[\.\)]\s*", "", l.strip())
             for l in text.strip().split("\n")
-            if l.strip()
+            if l.strip() and len(l.strip()) > 10
         ]
         return lines[:6]
     except Exception:
         return [
-            "Show the first 10 rows",
             "What is the average of each numeric column?",
-            "How many unique values are in each column?",
+            "Show the distribution of all categorical columns",
+            "Which rows have the most missing values?",
         ]
+
+
+def _generate_followups(question: str, answer: str, schema: str) -> list[str]:
+    """Generate follow-up questions based on the current conversation turn."""
+    try:
+        client = _get_openai()
+        prompt = (
+            f"Database schema: {schema}\n\n"
+            f"User asked: {question}\n"
+            f"AI answered: {answer[:300]}\n\n"
+            f"Generate 3 natural follow-up questions the user might want to ask next. "
+            f"They must reference actual column names from the schema. "
+            f"Return ONLY 3 questions, one per line, no numbering, concise (max 10 words each)."
+        )
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=150,
+        )
+        text = resp.choices[0].message.content or ""
+        lines = [
+            re.sub(r"^\d+[\.\)]\s*", "", l.strip())
+            for l in text.strip().split("\n")
+            if l.strip() and len(l.strip()) > 8
+        ]
+        return lines[:3]
+    except Exception:
+        return []
 
 
 # ─── Request / Response ───
@@ -326,9 +397,10 @@ async def chat(req: ChatRequest):
     if req.model == "gpt-3.5":
         raw_sql = _query_openai(sql_prompt)
     else:
-        raw_sql = _query_ollama(sql_prompt, req.model)
+        raw_sql = await _query_ollama(sql_prompt, req.model)
 
     sql = _clean_sql(raw_sql)
+    sql = _fix_column_names(sql, state.db_path)
     tokens_used += _count_tokens(raw_sql)
 
     # Execute SQL
@@ -346,7 +418,8 @@ async def chat(req: ChatRequest):
         if len(data) == 0:
             answer = "The query returned no results."
         elif len(data) == 1 and len(columns) <= 2:
-            answer = f"Result: {data[0]}"
+            vals = ", ".join(f"{k}: {v}" for k, v in data[0].items())
+            answer = f"Result: {vals}"
         else:
             answer = f"Found {len(data)} results."
     except Exception as e:
@@ -362,24 +435,25 @@ async def chat(req: ChatRequest):
         if chart_type and chart_type != "metric":
             viz = _create_visualization(data, chart_type)
 
-    # Generate natural language answer
-    if data:
+    # Generate natural language answer — only GPT-3.5 does a second LLM call.
+    # For local Ollama models we skip it (CPU inference is slow; SQL result is already shown).
+    if data and req.model == "gpt-3.5":
         try:
             nl_prompt = (
                 f"The user asked: {req.message}\n"
                 f"SQL result ({len(data)} rows): {str(data[:5])}\n"
                 f"Provide a brief, insightful answer in 2-3 sentences."
             )
-            if req.model == "gpt-3.5":
-                nl_answer = _query_openai(nl_prompt)
-            else:
-                nl_answer = _query_ollama(nl_prompt, req.model)
+            nl_answer = _query_openai(nl_prompt)
             answer = nl_answer
             tokens_used += _count_tokens(nl_answer)
         except Exception:
             pass
 
-    # Suggestions for next questions
+    # Generate context-aware follow-up questions for this specific turn
+    followups = _generate_followups(req.message, answer, schema)
+
+    # General suggestions (refreshed each turn)
     suggestions = _generate_suggestions(schema)
 
     return {
@@ -389,6 +463,7 @@ async def chat(req: ChatRequest):
         "visualization": viz,
         "tokens_used": tokens_used,
         "suggestions": suggestions,
+        "followups": followups,
     }
 
 
@@ -399,3 +474,28 @@ async def get_suggestions():
         return {"suggestions": []}
     schema = _get_schema_info(state.db_path)
     return {"suggestions": _generate_suggestions(schema)}
+
+
+@router.get("/chat/ollama/status")
+async def get_ollama_status():
+    """Check which local Ollama models are available and ready."""
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(f"{base_url}/api/tags")
+            data = resp.json()
+            pulled = [m["name"] for m in data.get("models", [])]
+            statuses = {}
+            for model_id, ollama_name in MODEL_TO_OLLAMA.items():
+                # Match by prefix (e.g. "llama3.1:latest" matches "llama3.1:latest")
+                ready = any(
+                    p == ollama_name or p.startswith(ollama_name.split(":")[0])
+                    for p in pulled
+                )
+                statuses[model_id] = {"ready": ready, "model": ollama_name}
+            return {"ollama_running": True, "models": statuses}
+    except Exception:
+        return {
+            "ollama_running": False,
+            "models": {k: {"ready": False, "model": v} for k, v in MODEL_TO_OLLAMA.items()},
+        }

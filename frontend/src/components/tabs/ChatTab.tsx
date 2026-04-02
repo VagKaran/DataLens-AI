@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { chatQuery, getChatSuggestions } from "@/lib/api";
+import { chatQuery, getChatSuggestions, getOllamaStatus, type OllamaModelStatus } from "@/lib/api";
 import { MODEL_CONFIGS, type ModelId, type ChatMessage } from "@/types";
 import {
   Send,
@@ -11,15 +11,16 @@ import {
   Bot,
   User,
   Cloud,
-  Cpu,
   Zap,
   Code,
   MemoryStick,
   Search,
-  FileText,
-  Lightbulb,
   ChevronDown,
   AlertTriangle,
+  Copy,
+  Check,
+  Download,
+  ArrowRight,
 } from "lucide-react";
 
 function getModelIcon(id: ModelId) {
@@ -35,6 +36,7 @@ function getModelIcon(id: ModelId) {
   }
 }
 
+
 export default function ChatTab() {
   const {
     dataset,
@@ -48,29 +50,47 @@ export default function ChatTab() {
     setChatLoading,
     suggestedQuestions,
     setSuggestedQuestions,
+    clearChat,
+    chatDatasetId,
+    setChatDatasetId,
   } = useStore();
 
   const [input, setInput] = useState("");
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<Record<string, OllamaModelStatus>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+
+  function autoResizeTextarea(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }
 
   const modelConfig = MODEL_CONFIGS.find((m) => m.id === selectedModel)!;
   const contextUsedPct = (totalTokensUsed / modelConfig.contextWindow) * 100;
 
-  // Load suggestions on mount
+  // Detect dataset change using persisted chatDatasetId in the global store.
+  // This survives ChatTab unmount/remount (e.g. when the user uploads a new dataset
+  // from the landing page, which temporarily unmounts the dashboard).
   useEffect(() => {
-    if (dataset && suggestedQuestions.length === 0) {
+    if (!dataset) return;
+    const currentId = `${dataset.filename}::${dataset.rows}`;
+    if (chatDatasetId !== currentId) {
+      // New dataset loaded — reset chat session and fetch fresh suggestions
+      clearChat();
+      setSuggestedQuestions([]);
+      setChatDatasetId(currentId);
       getChatSuggestions()
         .then((res) => setSuggestedQuestions(res.suggestions))
         .catch(console.error);
     }
-  }, [dataset, suggestedQuestions.length, setSuggestedQuestions]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset?.filename, dataset?.rows]);
 
-  // Auto-scroll — use scrollTop on the container instead of scrollIntoView
-  // to prevent the parent page from scrolling (which hides the header)
+  // Auto-scroll
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (container) {
@@ -95,10 +115,23 @@ export default function ChatTab() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showModelPicker]);
 
+  // Poll Ollama status every 10s to track model availability
+  useEffect(() => {
+    function fetchStatus() {
+      getOllamaStatus()
+        .then((res) => setOllamaStatus(res.models))
+        .catch(() => setOllamaStatus({}));
+    }
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   async function handleSend(text?: string) {
     const msg = text || input.trim();
     if (!msg || chatLoading) return;
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -130,6 +163,7 @@ export default function ChatTab() {
         data: res.data,
         visualization: res.visualization,
         tokens_used: res.tokens_used,
+        followups: res.followups,
       };
       addChatMessage(aiMsg);
       setTotalTokensUsed(totalTokensUsed + (res.tokens_used || 0));
@@ -150,13 +184,40 @@ export default function ChatTab() {
     }
   }
 
+  function exportChat() {
+    const lines = chatMessages.map((msg) => {
+      const role = msg.role === "user" ? "You" : "DataLens AI";
+      let text = `[${msg.timestamp}] ${role}:\n${msg.content}`;
+      if (msg.sql) text += `\n\nSQL Query:\n${msg.sql}`;
+      if (msg.data && msg.data.length > 0)
+        text += `\n\nResult: ${msg.data.length} row(s) returned`;
+      return text;
+    });
+    const header = `DataLens AI — Chat Export\nDataset: ${dataset?.filename || "Unknown"} (${dataset?.rows.toLocaleString()} rows, ${dataset?.columns} columns)\nDate: ${new Date().toLocaleDateString()}\n${"═".repeat(50)}\n\n`;
+    const content = header + lines.join("\n\n" + "─".repeat(50) + "\n\n");
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `datalens_chat_${new Date().toISOString().split("T")[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   if (!dataset) return null;
+
+  // Find index of last assistant message (for inline follow-ups)
+  const lastAiIdx = chatMessages.reduce(
+    (acc, msg, i) => (msg.role === "assistant" ? i : acc),
+    -1
+  );
 
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col overflow-hidden">
-      {/* Fixed Header Area — always visible, never scrolls */}
+      {/* Fixed Header */}
       <div className="flex-shrink-0 max-w-5xl mx-auto w-full px-6 pt-8 pb-2">
-        {/* AI Status Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-surface-container rounded-2xl shadow-sm">
@@ -173,69 +234,104 @@ export default function ChatTab() {
             </div>
           </div>
 
-          {/* Model Picker */}
-          <div ref={modelPickerRef} className="relative z-50">
-            <button
-              onClick={() => setShowModelPicker(!showModelPicker)}
-              className="flex items-center gap-3 bg-surface-container-low px-4 py-2.5 rounded-xl border border-outline-variant/20 hover:border-primary/30 transition-all"
-            >
-              {(() => {
-                const Icon = getModelIcon(selectedModel);
-                return <Icon size={16} className="text-primary" />;
-              })()}
-              <span className="text-sm font-semibold text-on-surface">
-                {modelConfig.name}
-              </span>
-              <span
-                className={`label-technical px-2 py-0.5 rounded-full ${
-                  modelConfig.provider === "cloud"
-                    ? "bg-blue-500/20 text-blue-400"
-                    : "bg-green-500/20 text-green-400"
-                }`}
+          <div className="flex items-center gap-3">
+            {/* Export button */}
+            {chatMessages.length > 0 && (
+              <button
+                onClick={exportChat}
+                title="Export conversation"
+                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-surface-container-low border border-outline-variant/20 hover:border-primary/30 text-on-surface-variant hover:text-primary transition-all text-xs font-semibold"
               >
-                {modelConfig.provider}
-              </span>
-              <ChevronDown size={14} className="text-outline" />
-            </button>
+                <Download size={14} />
+                Export
+              </button>
+            )}
 
-            {showModelPicker && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-surface-container-high rounded-xl border border-outline-variant/20 shadow-deep z-50 p-2">
-                {MODEL_CONFIGS.map((m) => {
-                  const Icon = getModelIcon(m.id);
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        setSelectedModel(m.id);
-                        setShowModelPicker(false);
-                      }}
-                      className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all ${
-                        selectedModel === m.id
-                          ? "bg-primary/10 text-on-surface"
-                          : "text-on-surface-variant hover:bg-surface-container-highest"
-                      }`}
-                    >
-                      <Icon size={18} className="text-primary flex-shrink-0" />
-                      <div className="flex-1 text-left">
-                        <div className="text-sm font-semibold">{m.name}</div>
-                        <div className="text-[10px] text-on-surface-variant">
-                          Context: {m.contextWindow.toLocaleString()} tokens
-                        </div>
-                      </div>
-                      <span
-                        className={`label-technical px-2 py-0.5 rounded-full ${
-                          m.provider === "cloud"
-                            ? "bg-blue-500/20 text-blue-400"
-                            : "bg-green-500/20 text-green-400"
+            {/* Model Picker */}
+            <div ref={modelPickerRef} className="relative z-50">
+              <button
+                onClick={() => setShowModelPicker(!showModelPicker)}
+                className="flex items-center gap-3 bg-surface-container-low px-4 py-2.5 rounded-xl border border-outline-variant/20 hover:border-primary/30 transition-all"
+              >
+                {(() => {
+                  const Icon = getModelIcon(selectedModel);
+                  return <Icon size={16} className="text-primary" />;
+                })()}
+                <span className="text-sm font-semibold text-on-surface">
+                  {modelConfig.name}
+                </span>
+                <span
+                  className={`label-technical px-2 py-0.5 rounded-full ${
+                    modelConfig.provider === "cloud"
+                      ? "bg-blue-500/20 text-blue-400"
+                      : "bg-green-500/20 text-green-400"
+                  }`}
+                >
+                  {modelConfig.provider}
+                </span>
+                <ChevronDown size={14} className="text-outline" />
+              </button>
+
+              {showModelPicker && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-surface-container-high rounded-xl border border-outline-variant/20 shadow-deep z-50 p-2">
+                  {MODEL_CONFIGS.map((m) => {
+                    const Icon = getModelIcon(m.id);
+                    const isLocal = m.provider === "local";
+                    const status = ollamaStatus[m.id];
+                    const isReady = !isLocal || status?.ready;
+                    const isDownloading = isLocal && status !== undefined && !status.ready;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          setSelectedModel(m.id);
+                          setShowModelPicker(false);
+                        }}
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all ${
+                          selectedModel === m.id
+                            ? "bg-primary/10 text-on-surface"
+                            : "text-on-surface-variant hover:bg-surface-container-highest"
                         }`}
                       >
-                        {m.provider}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                        <Icon size={18} className="text-primary flex-shrink-0" />
+                        <div className="flex-1 text-left">
+                          <div className="text-sm font-semibold">{m.name}</div>
+                          <div className="text-[10px] text-on-surface-variant">
+                            Context: {m.contextWindow.toLocaleString()} tokens
+                            {isLocal && status && ` · ${status.model}`}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span
+                            className={`label-technical px-2 py-0.5 rounded-full ${
+                              m.provider === "cloud"
+                                ? "bg-blue-500/20 text-blue-400"
+                                : "bg-green-500/20 text-green-400"
+                            }`}
+                          >
+                            {m.provider}
+                          </span>
+                          {isLocal && (
+                            <span className={`label-technical px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                              isReady
+                                ? "bg-emerald-500/20 text-emerald-400"
+                                : isDownloading
+                                ? "bg-yellow-500/20 text-yellow-400"
+                                : "bg-surface-container-highest text-on-surface-variant"
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                isReady ? "bg-emerald-400" : isDownloading ? "bg-yellow-400 animate-pulse" : "bg-outline"
+                              }`} />
+                              {isReady ? "Ready" : isDownloading ? "Downloading..." : "Not loaded"}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -281,9 +377,12 @@ export default function ChatTab() {
         </div>
       </div>
 
-      {/* Scrollable Middle — messages area, takes all remaining space */}
+      {/* Scrollable Messages Area */}
       <div className="flex-1 min-h-0 relative max-w-5xl mx-auto w-full">
-        <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto px-6 py-4 space-y-8">
+        <div
+          ref={messagesContainerRef}
+          className="absolute inset-0 overflow-y-auto px-6 py-4 space-y-8"
+        >
           {chatMessages.length === 0 && (
             <div className="flex gap-4 items-start max-w-[85%]">
               <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center">
@@ -305,24 +404,44 @@ export default function ChatTab() {
             </div>
           )}
 
-          {chatMessages.map((msg) => (
+          {chatMessages.map((msg, msgIdx) => (
             <div key={msg.id}>
               {msg.role === "assistant" ? (
                 <div className="flex gap-4 items-start max-w-[85%]">
                   <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center">
                     <Bot size={14} className="text-primary" />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 flex-1">
                     <div className="bubble-ai">
                       <p className="leading-relaxed whitespace-pre-wrap">
                         {msg.content}
                       </p>
                       {msg.sql && (
-                        <div className="mt-3 p-3 bg-surface-container-lowest rounded-lg">
-                          <p className="label-technical text-primary mb-1">
-                            SQL Query
-                          </p>
-                          <code className="text-xs text-on-surface-variant font-mono">
+                        <div className="mt-3 p-3 bg-surface-container-lowest rounded-lg group/sql relative">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <p className="label-technical text-primary">
+                              SQL Query
+                            </p>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(msg.sql!);
+                                setCopiedId(msg.id);
+                                setTimeout(() => setCopiedId(null), 2000);
+                              }}
+                              className="opacity-0 group-hover/sql:opacity-100 transition-opacity p-1 rounded-md hover:bg-surface-container-high flex items-center gap-1"
+                              title="Copy SQL"
+                            >
+                              {copiedId === msg.id ? (
+                                <Check size={11} className="text-primary" />
+                              ) : (
+                                <Copy
+                                  size={11}
+                                  className="text-on-surface-variant"
+                                />
+                              )}
+                            </button>
+                          </div>
+                          <code className="text-xs text-on-surface-variant font-mono whitespace-pre-wrap break-all">
                             {msg.sql}
                           </code>
                         </div>
@@ -369,6 +488,31 @@ export default function ChatTab() {
                         </div>
                       )}
                     </div>
+
+                    {/* Inline follow-up suggestions — only after last AI message */}
+                    {msgIdx === lastAiIdx &&
+                      msg.followups &&
+                      msg.followups.length > 0 &&
+                      !chatLoading && (
+                        <div className="mt-1">
+                          <p className="label-technical text-on-surface-variant mb-2 ml-1">
+                            Follow-up questions
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {msg.followups.map((q) => (
+                              <button
+                                key={q}
+                                onClick={() => handleSend(q)}
+                                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 hover:border-primary/40 transition-all active:scale-95"
+                              >
+                                <ArrowRight size={10} />
+                                {q}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                     <span className="label-technical text-on-surface-variant ml-1">
                       DataLens AI &bull; {msg.timestamp}
                     </span>
@@ -406,7 +550,9 @@ export default function ChatTab() {
                     <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce [animation-delay:300ms]" />
                   </div>
-                  <span className="text-xs">Analyzing with {modelConfig.name}...</span>
+                  <span className="text-xs">
+                    Analyzing with {modelConfig.name}...
+                  </span>
                 </div>
               </div>
             </div>
@@ -416,18 +562,18 @@ export default function ChatTab() {
         </div>
       </div>
 
-      {/* Fixed Input Area — always at the bottom */}
+      {/* Fixed Input Area */}
       <div className="flex-shrink-0 max-w-5xl mx-auto w-full px-6 pb-4 pt-2">
-        {/* Suggested Chips */}
-        {suggestedQuestions.length > 0 && chatMessages.length < 4 && (
-          <div className="flex gap-2 mb-3 overflow-x-auto scrollbar-hide">
-            {suggestedQuestions.slice(0, 3).map((q) => (
+        {/* Dataset-specific suggested questions (contextual chips) */}
+        {suggestedQuestions.length > 0 && chatMessages.length < 6 && (
+          <div className="flex gap-2 mb-3 overflow-x-auto scrollbar-hide pb-0.5">
+            {suggestedQuestions.slice(0, 4).map((q) => (
               <button
                 key={q}
                 onClick={() => handleSend(q)}
-                className="whitespace-nowrap bg-surface-container-highest/50 hover:bg-surface-container-highest text-on-surface text-xs font-semibold py-2 px-4 rounded-full border border-outline-variant/10 transition-all flex items-center gap-2 active:scale-95"
+                className="flex-shrink-0 whitespace-nowrap bg-surface-container-highest/40 hover:bg-surface-container-highest text-on-surface text-xs font-medium py-1.5 px-3 rounded-full border border-outline-variant/10 hover:border-outline-variant/25 transition-all flex items-center gap-1.5 active:scale-95"
               >
-                <Search size={12} />
+                <Search size={10} className="text-primary" />
                 {q}
               </button>
             ))}
@@ -441,14 +587,22 @@ export default function ChatTab() {
             <button className="p-4 text-on-surface-variant hover:text-primary transition-colors">
               <Paperclip size={20} />
             </button>
-            <input
+            <textarea
               ref={inputRef}
-              type="text"
+              rows={1}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="Ask DataLens anything about your dataset..."
-              className="flex-1 bg-transparent border-none focus:ring-0 text-on-surface placeholder-on-surface-variant/40 py-4 text-sm font-medium outline-none"
+              onChange={(e) => {
+                setInput(e.target.value);
+                autoResizeTextarea(e.target);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="Ask DataLens anything about your dataset... (Shift+Enter for new line)"
+              className="flex-1 bg-transparent border-none focus:ring-0 text-on-surface placeholder-on-surface-variant/40 py-4 text-sm font-medium outline-none resize-none leading-relaxed"
             />
             <div className="flex items-center gap-2 pr-4">
               <button className="p-2 text-on-surface-variant hover:text-primary transition-colors">

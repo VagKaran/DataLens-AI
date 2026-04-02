@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { runPrediction } from "@/lib/api";
+import { runPrediction, getSuggestedTargets } from "@/lib/api";
+import type { TargetSuggestion } from "@/lib/api";
+import NextStepBanner from "@/components/ui/NextStepBanner";
 import {
   Target,
   Search,
@@ -10,16 +12,17 @@ import {
   Star,
   Sparkles,
   ArrowRight,
+  Brain,
+  ChevronDown,
 } from "lucide-react";
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  Legend,
 } from "recharts";
 
 export default function PredictTab() {
@@ -29,8 +32,20 @@ export default function PredictTab() {
     setPredictionResult,
     predictionLoading,
     setPredictionLoading,
+    setActiveTab,
   } = useStore();
   const [question, setQuestion] = useState("");
+  const [suggestions, setSuggestions] = useState<TargetSuggestion[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+
+  useEffect(() => {
+    if (!dataset) return;
+    setSuggestLoading(true);
+    getSuggestedTargets()
+      .then((res) => setSuggestions(res.suggestions))
+      .catch(console.error)
+      .finally(() => setSuggestLoading(false));
+  }, [dataset]);
 
   async function handlePredict() {
     if (!question.trim()) return;
@@ -65,6 +80,73 @@ export default function PredictTab() {
       </header>
 
       <section className="px-8 pb-20 space-y-8">
+        {/* AI-Suggested Targets */}
+        {(suggestLoading || suggestions.length > 0) && (
+          <div className="bg-surface-container-low rounded-xl p-6 ghost-border shadow-2xl">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="h-8 w-8 bg-tertiary/20 rounded-full flex items-center justify-center text-tertiary">
+                <Brain size={18} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-on-surface uppercase tracking-wider">
+                  AI-Suggested Targets
+                </h2>
+                <p className="text-xs text-on-surface-variant">
+                  Based on your dataset structure — click to select
+                </p>
+              </div>
+            </div>
+
+            {suggestLoading ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-surface-container rounded-xl p-4 animate-pulse space-y-2">
+                    <div className="h-3 w-16 bg-surface-container-high rounded" />
+                    <div className="h-5 w-24 bg-surface-container-high rounded" />
+                    <div className="h-3 w-full bg-surface-container-high rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {suggestions.map((s, i) => {
+                  const isSelected = question.toLowerCase().includes(s.column.toLowerCase());
+                  const colors = [
+                    { ring: "ring-blue-500/40", bg: "bg-blue-500/10", text: "text-blue-400", badge: "bg-blue-500/20 text-blue-400" },
+                    { ring: "ring-purple-500/40", bg: "bg-purple-500/10", text: "text-purple-400", badge: "bg-purple-500/20 text-purple-400" },
+                    { ring: "ring-amber-500/40", bg: "bg-amber-500/10", text: "text-amber-400", badge: "bg-amber-500/20 text-amber-400" },
+                  ][i] ?? { ring: "ring-primary/40", bg: "bg-primary/10", text: "text-primary", badge: "bg-primary/20 text-primary" };
+
+                  return (
+                    <button
+                      key={s.column}
+                      onClick={() => setQuestion(`Predict ${s.column}`)}
+                      className={`text-left p-4 rounded-xl border transition-all active:scale-[0.98] ${
+                        isSelected
+                          ? `border-transparent ring-2 ${colors.ring} ${colors.bg}`
+                          : "border-outline-variant/15 hover:border-outline-variant/30 hover:bg-surface-container-high/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`label-technical px-2 py-0.5 rounded-full ${colors.badge}`}>
+                          #{i + 1} Suggested
+                        </span>
+                        {isSelected && (
+                          <CheckCircle size={14} className={colors.text} />
+                        )}
+                      </div>
+                      <p className={`text-base font-bold mb-1.5 ${isSelected ? colors.text : "text-on-surface"}`}>
+                        {s.column}
+                      </p>
+                      <p className="text-[11px] text-on-surface-variant leading-snug">{s.reason}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Define Target Card */}
         <div className="bg-surface-container-low rounded-xl p-6 ghost-border shadow-2xl">
           <div className="flex items-center gap-3 mb-6">
@@ -76,6 +158,28 @@ export default function PredictTab() {
             </h2>
           </div>
           <div className="max-w-3xl space-y-4">
+            {/* Smart Column Picker */}
+            {dataset && dataset.numeric_columns.length > 0 && (
+              <div className="relative">
+                <ChevronDown
+                  size={16}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-outline pointer-events-none"
+                />
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) setQuestion(`Predict ${e.target.value}`);
+                  }}
+                  className="w-full appearance-none bg-surface-container-lowest border border-outline-variant/30 rounded-xl py-3 pl-4 pr-10 text-sm text-on-surface-variant focus:ring-2 focus:ring-primary outline-none transition-all cursor-pointer"
+                >
+                  <option value="">Pick a column to predict...</option>
+                  {dataset.numeric_columns.map((col) => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="relative">
               <Search
                 size={18}
@@ -86,26 +190,9 @@ export default function PredictTab() {
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handlePredict()}
-                placeholder="What would you like to predict?"
+                placeholder="e.g. Predict Survived, Predict Revenue..."
                 className="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-xl py-4 pl-12 pr-4 text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-outline"
               />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                "Predict Revenue for next month",
-                "Customer Churn Probability",
-                "Inventory Stock-out Risk",
-              ].map((s) => (
-                <button
-                  key={s}
-                  onClick={() => {
-                    setQuestion(s);
-                  }}
-                  className="bg-surface-container-highest px-4 py-2 rounded-full text-xs font-medium text-on-surface-variant hover:bg-primary hover:text-on-primary transition-all"
-                >
-                  {s}
-                </button>
-              ))}
             </div>
             <button
               onClick={handlePredict}
@@ -116,6 +203,49 @@ export default function PredictTab() {
             </button>
           </div>
         </div>
+
+        {/* Next step after prediction */}
+        {predictionResult && (
+          <NextStepBanner
+            title="Prediction complete — generate a full report"
+            description={`${predictionResult.best_model} achieved ${(predictionResult.best_score * 100).toFixed(1)}% R². Summarize your findings in a Story.`}
+            cta="Generate Story"
+            onAction={() => setActiveTab("story")}
+            color="purple"
+          />
+        )}
+
+        {predictionLoading && (
+          <div className="space-y-6 animate-pulse">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="bg-surface-container rounded-xl p-6 space-y-4">
+                  <div className="h-3 w-16 bg-surface-container-high rounded" />
+                  <div className="h-8 w-32 bg-surface-container-high rounded" />
+                  <div className="h-3 w-24 bg-surface-container-high rounded" />
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-2 bg-surface-container-low rounded-xl p-6 space-y-4">
+                <div className="h-4 w-48 bg-surface-container-high rounded" />
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-10 bg-surface-container-high rounded" />
+                ))}
+              </div>
+              <div className="bg-surface-container-high rounded-xl p-6 space-y-3">
+                <div className="h-4 w-32 bg-surface-container-highest rounded" />
+                <div className="h-24 bg-surface-container-highest rounded" />
+              </div>
+            </div>
+            <div className="bg-surface-container rounded-xl p-8 h-64 flex items-center justify-center">
+              <div className="text-center space-y-2">
+                <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-sm text-on-surface-variant font-medium">Training models...</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {res && (
           <>
@@ -272,7 +402,17 @@ export default function PredictTab() {
                 </div>
               </div>
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={res.forecast}>
+                <AreaChart data={res.forecast}>
+                  <defs>
+                    <linearGradient id="histGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4d8eff" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#4d8eff" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="predGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ffb4ab" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#ffb4ab" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="#424754" strokeOpacity={0.1} />
                   <XAxis dataKey="index" stroke="#8c909f" fontSize={10} />
                   <YAxis stroke="#8c909f" fontSize={10} />
@@ -284,24 +424,26 @@ export default function PredictTab() {
                       color: "#dae2fd",
                     }}
                   />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="historical"
                     stroke="#4d8eff"
-                    strokeWidth={3}
+                    strokeWidth={2.5}
+                    fill="url(#histGrad)"
                     dot={false}
                     connectNulls={false}
                   />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="predicted"
                     stroke="#ffb4ab"
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     strokeDasharray="8 4"
+                    fill="url(#predGrad)"
                     dot={false}
                     connectNulls={false}
                   />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           </>

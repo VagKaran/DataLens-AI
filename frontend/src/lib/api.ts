@@ -84,6 +84,7 @@ export async function chatQuery(
   visualization?: string;
   tokens_used: number;
   suggestions: string[];
+  followups?: string[];
 }> {
   return request("/chat", {
     method: "POST",
@@ -93,4 +94,46 @@ export async function chatQuery(
 
 export async function getChatSuggestions(): Promise<{ suggestions: string[] }> {
   return request<{ suggestions: string[] }>("/chat/suggestions");
+}
+
+export interface OllamaModelStatus {
+  ready: boolean;
+  model: string;
+}
+
+export async function getOllamaStatus(): Promise<{
+  ollama_running: boolean;
+  models: Record<string, OllamaModelStatus>;
+}> {
+  return request("/chat/ollama/status");
+}
+
+// ─── Samples ───
+export interface SampleMeta {
+  id: string;
+  name: string;
+  description: string;
+  rows: number;
+  columns: number;
+  tags: string[];
+  color: string;
+}
+
+export async function listSamples(): Promise<SampleMeta[]> {
+  return request<SampleMeta[]>("/samples");
+}
+
+export async function loadSample(id: string): Promise<DatasetInfo> {
+  return request<DatasetInfo>(`/samples/${id}`, { method: "POST" });
+}
+
+// ─── Predict suggestions ───
+export interface TargetSuggestion {
+  column: string;
+  reason: string;
+  score: number;
+}
+
+export async function getSuggestedTargets(): Promise<{ suggestions: TargetSuggestion[] }> {
+  return request<{ suggestions: TargetSuggestion[] }>("/predict/suggest");
 }
